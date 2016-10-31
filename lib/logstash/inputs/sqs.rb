@@ -116,7 +116,7 @@ class LogStash::Inputs::SQS < LogStash::Inputs::Threadable
 
   def decode_event(message)
     @codec.decode(message.body) do |event|
-      return event
+      yield event
     end
   end
   
@@ -129,10 +129,11 @@ class LogStash::Inputs::SQS < LogStash::Inputs::Threadable
   end
 
   def handle_message(message)
-    event = decode_event(message)
-    add_sqs_data(event, message)
-    decorate(event)
-    return event
+    decode_event(message) do |event|
+      add_sqs_data(event, message)
+      decorate(event)
+      yield event
+    end
   end
 
   def run(output_queue)
@@ -143,7 +144,9 @@ class LogStash::Inputs::SQS < LogStash::Inputs::Threadable
         break if stop?
 
         messages.each do |message|
-          output_queue << handle_message(message)
+          handle_message(message) do |event|
+            output_queue << event
+          end
         end
 
         @logger.debug("SQS Stats:", :request_count => stats.request_count,

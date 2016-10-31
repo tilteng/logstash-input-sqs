@@ -138,7 +138,10 @@ describe LogStash::Inputs::SQS do
       subject { LogStash::Inputs::SQS::new(config.merge({ "codec" => "json" })) }
 
       it "uses the specified codec" do
-        expect(subject.decode_event(encoded_message).get("bonjour")).to eq(decoded_message["bonjour"])
+        expect { |b| subject.decode_event(encoded_message, &b) }.to yield_control.once
+        subject.decode_event(encoded_message) do |event|
+          expect(event.get("bonjour")).to eq(decoded_message["bonjour"])
+        end
       end
     end
 
@@ -151,6 +154,14 @@ describe LogStash::Inputs::SQS do
         expect(mock_sqs).to receive(:poll).with(anything()).and_yield([encoded_message], double("stats"))
         subject.run(queue)
         expect(queue.pop.get("bonjour")).to eq(decoded_message["bonjour"])
+      end
+
+      it "handles multiple events in a single batch" do
+        message = double({ :body => LogStash::Json::dump([{ "hello" => "world" }, { "bonjour" => "awesome" }]) })
+        expect(mock_sqs).to receive(:poll).with(anything()).and_yield([message], double("stats"))
+        subject.run(queue)
+        expect(queue.pop.get("bonjour")).to eq("awesome")
+        expect(queue.pop.get("hello")).to eq("world")
       end
     end
 
@@ -165,7 +176,7 @@ describe LogStash::Inputs::SQS do
         it "retry to fetch messages" do
           # change the poller implementation to raise SQS errors.
           had_error = false
-          
+
           # actually using the child of `Object` to do an expectation of `#sleep`
           expect(subject).to receive(:sleep).with(LogStash::Inputs::SQS::BACKOFF_SLEEP_TIME)
           expect(mock_sqs).to receive(:poll).with(anything()).at_most(2) do
